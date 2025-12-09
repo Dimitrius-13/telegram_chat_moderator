@@ -59,6 +59,53 @@ async def update_chat_title(chat_id: int, title: str):
     
     await pool.execute('UPDATE settings SET chat_title = $1 WHERE chat_id = $2', title, chat_id)
 
+# 1. Видати преміум (Додаємо інтервал до поточної дати)
+async def set_premium(user_id: int, days: int):
+    async with pool.acquire() as conn:
+        # Оновлюємо або створюємо запис. 
+        # Якщо запису немає - вставимо пустий і оновимо дату.
+        # Увага: тут ми прив'язуємо підписку до user_id глобально (у всіх чатах)
+        # Для цього нам треба, щоб user_id існував хоча б в одному записі.
+        # Але для простоти ми оновимо дату у всіх записах цього юзера.
+        
+        await conn.execute(f"""
+            UPDATE users 
+            SET premium_until = NOW() + INTERVAL '{days} days' 
+            WHERE user_id = $1
+        """, user_id)
+
+# 2. Перевірити преміум
+async def check_premium(user_id: int) -> bool:
+    async with pool.acquire() as conn:
+        # Перевіряємо, чи є хоча б один запис, де дата закінчення > зараз
+        val = await conn.fetchval('''
+            SELECT premium_until FROM users 
+            WHERE user_id = $1 AND premium_until > NOW() 
+            LIMIT 1
+        ''', user_id)
+        return True if val else False
+
+# 3. Рахувати повідомлення (для статистики)
+async def increment_message_count(user_id: int, chat_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute('''
+            INSERT INTO users (user_id, chat_id, messages_count) 
+            VALUES ($1, $2, 1)
+            ON CONFLICT (user_id, chat_id) 
+            DO UPDATE SET messages_count = users.messages_count + 1
+        ''', user_id, chat_id)
+
+# 4. Отримати топ балакунів
+async def get_top_talkers(chat_id: int, limit=5):
+    async with pool.acquire() as conn:
+        return await conn.fetch('''
+            SELECT user_id, messages_count 
+            FROM users 
+            WHERE chat_id = $1 
+            ORDER BY messages_count DESC 
+            LIMIT $2
+        ''', chat_id, limit)
+
 async def get_all_chats():
     rows = await pool.fetch('SELECT chat_id, chat_title FROM settings')
     return rows # asyncpg повертає об'єкти, схожі на словники, це ок для твого коду
