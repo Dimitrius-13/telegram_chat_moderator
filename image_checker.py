@@ -6,10 +6,19 @@ import os
 API_USER = os.getenv("SIGHTENGINE_USER")
 API_SECRET = os.getenv("SIGHTENGINE_SECRET")
 
-client = SightengineClient(API_USER, API_SECRET)
+API_USER = os.getenv("SIGHTENGINE_USER")
+API_SECRET = os.getenv("SIGHTENGINE_SECRET")
 
+client = None
+if API_USER and API_SECRET:
+    client = SightengineClient(API_USER, API_SECRET)
+else:
+    print("⚠️ WARNING: Sightengine keys are missing. Image checks will be skipped.")
 
-client = SightengineClient(API_USER, API_SECRET)
+async def check_image_content(file_path: str) -> str | None:
+    if not client: 
+        return None # Просто пропускаємо, якщо немає ключів
+
 
 async def check_image_content(file_path: str) -> str | None:
     """
