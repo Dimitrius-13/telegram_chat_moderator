@@ -5,6 +5,9 @@ import os
 # Наприклад: "postgres://user:pass@host/db"
 DB_URL = os.getenv("DATABASE_URL")
 
+if not DB_URL:
+    print("❌ CRITICAL ERROR: DATABASE_URL is missing!")
+
 pool = None
 
 async def init_db():
