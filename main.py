@@ -403,6 +403,20 @@ async def cb_set_ban(callback: CallbackQuery):
         if "message is not modified" not in str(e).lower():
             print(f"Error set ban: {e}")
 
+
+@router.callback_query(F.data == "back_to_start")
+async def cb_back_start(callback: CallbackQuery):
+    try: await callback.answer()
+    except: pass
+    
+    # Видаляємо старе повідомлення
+    try: await callback.message.delete()
+    except: pass
+    
+    # Викликаємо стартову функцію заново
+    await cmd_start(callback.message)
+
+
 # Назад до списку
 @router.callback_query(F.data == "back_to_list")
 async def cb_back_list(callback: CallbackQuery):
