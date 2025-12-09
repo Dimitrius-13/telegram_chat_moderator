@@ -477,6 +477,34 @@ async def cb_show_reports(callback: CallbackQuery):
     )
     await callback.answer()
 
+# Кнопка "Інструкція" (ОНОВЛЕНА)
+@router.callback_query(F.data == "show_help")
+async def cb_help(callback: CallbackQuery):
+    # Оновлений текст інструкції
+    instruction_text = (
+        "📚 <b>ЯК НАЛАШТУВАТИ БОТА:</b>\n\n"
+        "<b>Крок 1: Підключення</b>\n"
+        "1. Додайте мене у вашу групу.\n"
+        "2. <b>Призначте Адміністратором</b> (мені потрібні права видаляти повідомлення і банити).\n\n"
+        "<b>Крок 2: Активація</b>\n"
+        "3. Напишіть у групі <b>будь-яке повідомлення</b> (наприклад: 'привіт').\n"
+        "<i>Це потрібно, щоб я зберіг вашу групу в базу даних.</i>\n\n"
+        "<b>Крок 3: Налаштування</b>\n"
+        "4. Поверніться сюди (в особисті повідомлення).\n"
+        "5. Натисніть кнопку <b>'⚙️ Адмінка'</b> або напишіть /admin.\n"
+        "6. Оберіть чат і натисніть <b>'📊 Логи в ЛС'</b>, щоб бачити звіти."
+    )
+    
+    # Кнопки навігації
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Додати в групу", url=f"https://t.me/{(await bot.get_me()).username}?startgroup=true")],
+        [InlineKeyboardButton(text="⚙️ Адмінка (Крок 3)", callback_data="back_to_list")],
+        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_start")]
+    ])
+    
+    # Редагуємо повідомлення
+    await callback.message.edit_text(instruction_text, reply_markup=kb, parse_mode="HTML")
+
 # ОБРОБКА ДІЙ (БАН, МУТ, ВИДАЛИТИ, ПРОПУСТИТИ)
 @router.callback_query(F.data.startswith("act_"))
 async def cb_report_actions(callback: CallbackQuery):
@@ -761,66 +789,67 @@ async def cmd_stats(message: Message):
         await wait_msg.edit_text(f"Сталася помилка: {e}")
 
 # ==========================================
-# ОСНОВНИЙ ЛІСЕНЕР (Оновлений)
+# ОСНОВНИЙ СЛУХАЧ (GLOBAL LISTENER)
 # ==========================================
 @router.message(F.chat.type.in_({"group", "supergroup"}))
 async def global_listener(message: Message):
-
-    if message.from_user and not message.from_user.is_bot:
-        await db.increment_message_count(message.from_user.id, message.chat.id)
-
-    
-    # 1. Оновлюємо назву чату в БД
+    # 1. РЕЄСТРАЦІЯ ЧАТУ В БД
+    # Це виконує пункт 3 інструкції: як тільки хтось пише, бот зберігає ID і назву чату
     if message.chat.title:
         await db.update_chat_title(message.chat.id, message.chat.title)
 
-    # Ігноруємо самого бота
+    # Ігноруємо повідомлення від самого бота
     if message.from_user.id == bot.id: return
+    
+    # 2. СТАТИСТИКА
+    # Рахуємо повідомлення для графіків (Premium)
+    await db.increment_message_count(message.from_user.id, message.chat.id)
 
-    # Отримуємо статус користувача
+    # Отримуємо статус користувача (адмін чи ні)
     member = await message.chat.get_member(message.from_user.id)
     is_admin = member.status in ("administrator", "creator")
 
-    # --- 🛡 АНТИ-ФЛУД (Тільки для звичайних смертних) ---
+    # --- 🛡 АНТИ-ФЛУД (Тільки для звичайних користувачів) ---
     if not is_admin:
+        # Функція check_flood має бути визначена вище в коді
         is_flooding = await check_flood(message)
         if is_flooding:
             return # Якщо замутили - далі не перевіряємо
-    # ---------------------------------------------------
+    # -------------------------------------------------------
 
-    # Якщо адмін - далі не перевіряємо на мати/посилання
+    # Якщо пише адмін - пропускаємо перевірки на спам/мати
     if is_admin: return
 
-    # --- 🔗 АНТИ-ЛІНК ---
+    # --- 🔗 АНТИ-ЛІНК (Перевірка посилань) ---
     if message.text or message.caption:
         txt = message.text or message.caption
         if LINK_REGEX.search(txt):
             try: await message.delete()
             except: pass
-            msg = await message.answer(f"⚠️ {message.from_user.full_name}, посилання заборонені!")
-            await asyncio.sleep(5)
-            try: await msg.delete()
-            except: pass
+            
+            msg = await message.answer(f"⚠️ {message.from_user.full_name}, посилання заборонені!", delete_after=5)
             return 
 
-    # --- 🤬 ТЕКСТ (Мати) ---
+    # --- 🤬 ТЕКСТ (Перевірка на мати) ---
     if message.text:
         violation = word_list.check_text_violation(message.text)
         if violation:
+            # Функція punish_user має бути визначена вище
             await punish_user(message, violation)
             return
 
-    # --- 🔞 МЕДІА (AI) ---
+    # --- 🔞 МЕДІА (AI Перевірка фото/стікерів) ---
     file_id = None
     if message.photo: 
         file_id = message.photo[-1].file_id
     elif message.sticker: 
-        # Беремо thumbnail, якщо є
+        # Беремо thumbnail (статичну картинку), якщо є
         file_id = message.sticker.thumbnail.file_id if message.sticker.thumbnail else message.sticker.file_id
     elif message.animation and message.animation.thumbnail:
         file_id = message.animation.thumbnail.file_id
 
     if file_id:
+        # Функція process_media_check має бути визначена вище
         await process_media_check(message, file_id)
 
 async def main():
