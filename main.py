@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import datetime
+import sys
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import (
     Message, ChatPermissions, CallbackQuery, InlineKeyboardMarkup, 
@@ -10,12 +11,45 @@ from aiogram.types import (
 )
 from aiogram.filters import Command, CommandStart, BaseFilter
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiohttp import web  # Додали для фейкового сервера
 
 import database as db
 import word_list
 import image_checker 
 
-TOKEN = "8450050190:AAFdOQUVJLNmoUNq-4k4au3lDVOTc6Wa5ow"
+# --- ЗМІНИ ТУТ ---
+# Беремо токен зі змінних оточення (на сервері), або використовуємо твій хардкод для локального тесту
+TOKEN = os.getenv("BOT_TOKEN")
+
+bot = Bot(token=TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+router = Router()
+dp.include_router(router)
+
+if not os.path.exists("temp_photos"):
+    os.makedirs("temp_photos")
+
+# ... (ВЕСЬ ТВІЙ КОД ФІЛЬТРІВ, ЛОГІВ, АДМІНКИ ЗАЛИШАЄТЬСЯ БЕЗ ЗМІН) ...
+# ... (від LINK_REGEX до global_listener включно) ...
+
+# ... (після global_listener вставляємо цей новий фінал) ...
+
+# --- ФЕЙКОВИЙ ВЕБ-СЕРВЕР ДЛЯ KOYEB ---
+async def health_check(request):
+    return web.Response(text="Bot is running OK!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Koyeb дає порт через змінну PORT, або використовуємо 8000
+    port = int(os.getenv("PORT", 8000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"Web server started on port {port}")
+
+
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -560,9 +594,16 @@ async def global_listener(message: Message):
         await process_media_check(message, file_id)
 
 async def main():
+
+    await db.init_db()
+    
+    # Запускаємо веб-сервер у фоні
+    await start_web_server()
+    
     await db.init_db()
     print("Бот (v4.0 Full Pack) запущено...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
