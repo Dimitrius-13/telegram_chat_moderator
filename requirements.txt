@@ -3,3 +3,4 @@ sightengine
 aiohttp
 asyncpg
 requests
+python-dotenv
