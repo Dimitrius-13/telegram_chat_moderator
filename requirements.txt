@@ -4,3 +4,4 @@ aiohttp
 asyncpg
 requests
 python-dotenv
+matplotlib
