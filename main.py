@@ -12,6 +12,8 @@ from aiogram.types import (
 from aiogram.filters import Command, CommandStart, BaseFilter
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiohttp import web  # Додали для фейкового сервера
+from aiogram.types import LabeledPrice, PreCheckoutQuery, BufferedInputFile
+import analytics
 
 import database as db
 import word_list
@@ -546,39 +548,237 @@ async def cmd_unban(message: Message):
     except Exception as e:
         await message.answer(f"Помилка: {e}")
 
+
 # ==========================================
-# ОСНОВНИЙ ЛІСЕНЕР
+# 💎 ПРЕМІУМ ФУНКЦІЇ (ANTI-FLOOD & CLEANER)
+# ==========================================
+
+# Кеш для анти-флуду: зберігає час повідомлень {user_id: [time1, time2...]}
+FLOOD_CACHE = {} 
+FLOOD_LIMIT = 5   # Максимум повідомлень
+FLOOD_TIME = 10   # За скільки секунд (вікно перевірки)
+
+async def check_flood(message: Message) -> bool:
+    """
+    Перевіряє, чи не флудить користувач. 
+    Повертає True, якщо користувача замучено.
+    """
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    now = datetime.datetime.now().timestamp()
+
+    # Якщо користувача немає в кеші - створюємо список
+    if user_id not in FLOOD_CACHE:
+        FLOOD_CACHE[user_id] = []
+
+    # Додаємо час поточного повідомлення
+    FLOOD_CACHE[user_id].append(now)
+
+    # Залишаємо тільки свіжі повідомлення (не старші за FLOOD_TIME)
+    FLOOD_CACHE[user_id] = [t for t in FLOOD_CACHE[user_id] if now - t < FLOOD_TIME]
+
+    # Перевіряємо кількість
+    if len(FLOOD_CACHE[user_id]) > FLOOD_LIMIT:
+        # Очищаємо кеш, щоб не банити його знову кожну секунду
+        FLOOD_CACHE[user_id] = []
+        
+        try:
+            # Видаємо МУТ на 10 хвилин
+            mins = 10
+            until = datetime.datetime.now() + datetime.timedelta(minutes=mins)
+            permissions = ChatPermissions(can_send_messages=False)
+            
+            await bot.restrict_chat_member(chat_id, user_id, permissions=permissions, until_date=until)
+            
+            # Повідомляємо (і видаляємо це повідомлення через 5 сек)
+            msg = await message.answer(f"🌊 {message.from_user.full_name}, не флуди! Охолонь {mins} хв.")
+            await asyncio.sleep(5)
+            await msg.delete()
+            return True # Флуд виявлено
+            
+        except Exception as e:
+            print(f"Не вдалося видати мут за флуд: {e}")
+            
+    return False
+
+# 🧹 Авто-чистка системних повідомлень
+# Видаляє: "Вступив у групу", "Покинув групу", "Закріпив повідомлення"
+@router.message(F.content_type.in_({
+    ContentType.NEW_CHAT_MEMBERS, 
+    ContentType.LEFT_CHAT_MEMBER, 
+    ContentType.PINNED_MESSAGE
+}))
+async def clean_service_messages(message: Message):
+    try:
+        await message.delete()
+    except Exception as e:
+        # Іноді повідомлення вже видалено або немає прав
+        pass
+
+# ==========================================
+# 💰 PREMIUM & ПЛАТЕЖІ
+# ==========================================
+
+# 1. Кнопка "Купити Premium"
+@router.callback_query(F.data == "buy_premium")
+async def cb_buy_premium(callback: CallbackQuery):
+    payment_token = os.getenv("PAYMENT_TOKEN")
+    
+    if not payment_token:
+        await callback.answer("⚠️ Налаштування платежів не знайдено!", show_alert=True)
+        return
+
+    await bot.send_invoice(
+        chat_id=callback.from_user.id,
+        title="Premium Підписка (30 днів)",
+        description="Доступ до графіків активності (/stats) та пріоритетна підтримка.",
+        payload="month_sub_payload", # Унікальний ID для твого бекенду
+        provider_token=payment_token,
+        currency="UAH", # Можна змінити на XTR (Telegram Stars)
+        prices=[
+            LabeledPrice(label="Підписка", amount=10000) # Ціна в копійках! 100.00 грн
+        ],
+        start_parameter="buy_premium",
+        is_flexible=False
+    )
+    await callback.answer()
+
+# 2. Pre-Checkout (Обов'язкова перевірка перед списанням грошей)
+@router.pre_checkout_query()
+async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    # Тут можна перевірити, чи є товар в наявності (у нас підписка - завжди є)
+    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
+# 3. Успішна оплата (Гроші отримано)
+@router.message(F.successful_payment)
+async def process_successful_payment(message: Message):
+    payment_info = message.successful_payment
+    
+    # Видаємо преміум на 30 днів
+    await db.set_premium(message.from_user.id, 30)
+    
+    await message.answer(
+        f"🎉 <b>Оплата пройшла успішно!</b>\n"
+        f"Сума: {payment_info.total_amount / 100} {payment_info.currency}\n\n"
+        f"✅ Premium активовано до {datetime.datetime.now() + datetime.timedelta(days=30)}.\n"
+        f"Тепер спробуйте команду <code>/stats</code> у групі!",
+        parse_mode="HTML"
+    )
+
+# ==========================================
+# 📊 СТАТИСТИКА (Тільки для Premium)
+# ==========================================
+@router.message(Command("stats"))
+async def cmd_stats(message: Message):
+    # Працює тільки в групах
+    if message.chat.type == "private":
+        return await message.answer("Ця команда для групових чатів.")
+
+    # 1. Перевіряємо підписку того, хто викликав
+    user_id = message.from_user.id
+    has_premium = await db.check_premium(user_id)
+    
+    if not has_premium:
+        # Пропонуємо купити
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💎 Купити Premium", url=f"https://t.me/{(await bot.get_me()).username}?start=premium")]
+        ])
+        await message.answer(
+            "🔒 <b>Ця функція доступна тільки з Premium.</b>\n\n"
+            "Купіть підписку, щоб бачити, хто найактивніший у чаті.",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+        return
+
+    # 2. Генеруємо графік
+    wait_msg = await message.answer("📊 Збираю дані та малюю графік...")
+    
+    try:
+        # Отримуємо дані з БД
+        top_data = await db.get_top_talkers(message.chat.id, limit=7)
+        
+        if not top_data:
+            await wait_msg.edit_text("📉 У чаті поки немає активності.")
+            return
+
+        # Малюємо (це синхронна операція, тому запускаємо в executor, щоб не блокувати бота)
+        loop = asyncio.get_running_loop()
+        photo_bytes = await loop.run_in_executor(
+            None, 
+            analytics.create_chart, 
+            top_data, 
+            f"Активність: {message.chat.title}"
+        )
+        
+        if photo_bytes:
+            # Відправляємо картинку
+            file = BufferedInputFile(photo_bytes.read(), filename="stats.png")
+            await message.answer_photo(file, caption="📈 Топ найактивніших учасників.")
+            await wait_msg.delete()
+        else:
+            await wait_msg.edit_text("Помилка генерації графіка.")
+            
+    except Exception as e:
+        print(f"Stats Error: {e}")
+        await wait_msg.edit_text(f"Сталася помилка: {e}")
+
+# ==========================================
+# ОСНОВНИЙ ЛІСЕНЕР (Оновлений)
 # ==========================================
 @router.message(F.chat.type.in_({"group", "supergroup"}))
 async def global_listener(message: Message):
+
+    if message.from_user and not message.from_user.is_bot:
+        await db.increment_message_count(message.from_user.id, message.chat.id)
+
+    
+    # 1. Оновлюємо назву чату в БД
     if message.chat.title:
         await db.update_chat_title(message.chat.id, message.chat.title)
 
+    # Ігноруємо самого бота
     if message.from_user.id == bot.id: return
-    member = await message.chat.get_member(message.from_user.id)
-    if member.status in ("administrator", "creator"): return
 
-    # 2. АНТИ-ЛІНК (Нова фіча)
+    # Отримуємо статус користувача
+    member = await message.chat.get_member(message.from_user.id)
+    is_admin = member.status in ("administrator", "creator")
+
+    # --- 🛡 АНТИ-ФЛУД (Тільки для звичайних смертних) ---
+    if not is_admin:
+        is_flooding = await check_flood(message)
+        if is_flooding:
+            return # Якщо замутили - далі не перевіряємо
+    # ---------------------------------------------------
+
+    # Якщо адмін - далі не перевіряємо на мати/посилання
+    if is_admin: return
+
+    # --- 🔗 АНТИ-ЛІНК ---
     if message.text or message.caption:
         txt = message.text or message.caption
         if LINK_REGEX.search(txt):
-            # Видаляємо без зайвих розмов
             try: await message.delete()
             except: pass
-            await message.answer(f"⚠️ {message.from_user.full_name}, посилання заборонені!")
-            return # Далі не перевіряємо
+            msg = await message.answer(f"⚠️ {message.from_user.full_name}, посилання заборонені!")
+            await asyncio.sleep(5)
+            try: await msg.delete()
+            except: pass
+            return 
 
-    # 3. ТЕКСТ
+    # --- 🤬 ТЕКСТ (Мати) ---
     if message.text:
         violation = word_list.check_text_violation(message.text)
         if violation:
             await punish_user(message, violation)
             return
 
-    # 4. МЕДІА
+    # --- 🔞 МЕДІА (AI) ---
     file_id = None
-    if message.photo: file_id = message.photo[-1].file_id
+    if message.photo: 
+        file_id = message.photo[-1].file_id
     elif message.sticker: 
+        # Беремо thumbnail, якщо є
         file_id = message.sticker.thumbnail.file_id if message.sticker.thumbnail else message.sticker.file_id
     elif message.animation and message.animation.thumbnail:
         file_id = message.animation.thumbnail.file_id
