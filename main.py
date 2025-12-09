@@ -662,26 +662,21 @@ async def clean_service_messages(message: Message):
 # ==========================================
 
 # 1. Кнопка "Купити Premium"
+
 @router.callback_query(F.data == "buy_premium")
 async def cb_buy_premium(callback: CallbackQuery):
-    payment_token = os.getenv("PAYMENT_TOKEN")
-    
-    if not payment_token:
-        await callback.answer("⚠️ Налаштування платежів не знайдено!", show_alert=True)
-        return
-
     await bot.send_invoice(
         chat_id=callback.from_user.id,
-        title="Premium Підписка (30 днів)",
-        description="Доступ до графіків активності (/stats) та пріоритетна підтримка.",
-        payload="month_sub_payload", # Унікальний ID для твого бекенду
-        provider_token=payment_token,
-        currency="UAH", # Можна змінити на XTR (Telegram Stars)
+        title="Premium (30 днів)",
+        description="Доступ до графіків та аналітики.",
+        payload="month_sub_payload",
+        provider_token="", # <--- ДЛЯ STARS ЗАЛИШАЄМО ПОРОЖНІМ!
+        currency="XTR",    # <--- ВАЛЮТА - ЗІРКИ
         prices=[
-            LabeledPrice(label="Підписка", amount=10000) # Ціна в копійках! 100.00 грн
+            # Ціна в кількості зірок. 100 Stars ≈ $1.30 - $1.50
+            LabeledPrice(label="Підписка", amount=200) 
         ],
-        start_parameter="buy_premium",
-        is_flexible=False
+        start_parameter="buy_premium"
     )
     await callback.answer()
 
