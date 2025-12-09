@@ -1,10 +1,13 @@
 # image_checker.py
 import asyncio
 from sightengine.client import SightengineClient
+import os
+# Беремо ключі з сервера
+API_USER = os.getenv("SIGHTENGINE_USER")
+API_SECRET = os.getenv("SIGHTENGINE_SECRET")
 
-# Отримай ці ключі на сайті sightengine.com
-API_USER = '462923998'
-API_SECRET = 'RzZW2hWZsuHg7mraWZHCQPNzXoZCgDXy'
+client = SightengineClient(API_USER, API_SECRET)
+
 
 client = SightengineClient(API_USER, API_SECRET)
 
@@ -30,7 +33,6 @@ async def check_image_content(file_path: str) -> str | None:
             return "heavy"
 
         # 2. Часткове оголення (Partial)
-        # Ставимо 0.15 (як ти пропонував), щоб не чіплятися до майок
         if nudity.get('partial', 0) > 0.15: 
              return "heavy"
      
