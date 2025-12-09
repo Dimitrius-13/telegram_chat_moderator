@@ -49,13 +49,6 @@ async def start_web_server():
     await site.start()
     print(f"Web server started on port {port}")
 
-
-
-bot = Bot(token=TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
-router = Router()
-dp.include_router(router)
-
 if not os.path.exists("temp_photos"):
     os.makedirs("temp_photos")
 
@@ -594,16 +587,18 @@ async def global_listener(message: Message):
         await process_media_check(message, file_id)
 
 async def main():
-
+    # 1. Ініціалізація БД (Тільки один раз!)
     await db.init_db()
     
-    # Запускаємо веб-сервер у фоні
+    # 2. Запуск веб-сервера (для Koyeb)
     await start_web_server()
     
-    await db.init_db()
-    print("Бот (v4.0 Full Pack) запущено...")
+    print("Бот (v4.0 Full Pack + Neon DB) запущено...")
+    
+    # 3. Видаляємо вебхук (на всяк випадок) і запускаємо
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    asyncio.run(main())
