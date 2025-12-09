@@ -64,10 +64,19 @@ async def get_all_chats():
     return rows # asyncpg повертає об'єкти, схожі на словники, це ок для твого коду
 
 async def get_user_stats(user_id: int, chat_id: int):
+    # Спочатку пробуємо отримати дані
     row = await pool.fetchrow('SELECT warns_normal, warns_heavy, temp_bans_count FROM users WHERE user_id = $1 AND chat_id = $2', user_id, chat_id)
+    
     if not row:
-        await pool.execute('INSERT INTO users (user_id, chat_id) VALUES ($1, $2)', user_id, chat_id)
+        # Якщо немає - створюємо. 
+        # Використовуємо ON CONFLICT DO NOTHING, щоб уникнути помилок при паралельних запитах
+        await pool.execute('''
+            INSERT INTO users (user_id, chat_id) 
+            VALUES ($1, $2) 
+            ON CONFLICT (user_id, chat_id) DO NOTHING
+        ''', user_id, chat_id)
         return 0, 0, 0
+        
     return row['warns_normal'], row['warns_heavy'], row['temp_bans_count']
 
 async def update_warns(user_id: int, chat_id: int, normal: int, heavy: int):
