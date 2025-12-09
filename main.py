@@ -552,7 +552,7 @@ async def cmd_unban(message: Message):
 # 0. СТАРТОВЕ МЕНЮ (ПОКРАЩЕНЕ)
 # ==========================================
 
-@router.message(CommandStart())
+@router.message(Command("start"))
 async def cmd_start(message: Message):
     # --- ЛОГІКА ДЛЯ ГРУП ---
     if message.chat.type != "private":
