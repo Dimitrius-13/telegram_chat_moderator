@@ -2,3 +2,4 @@ aiogram==3.10.0
 sightengine
 aiohttp
 asyncpg
+requests
